@@ -3,11 +3,10 @@ use hex::{decode, encode};
 use near_sdk::{
     assert_one_yocto,
     env::{self, block_timestamp},
-    ext_contract,
-    json_types::U128,
     log, near, require,
-    store::{IterableMap, IterableSet, Vector},
-    AccountId, BorshStorageKey, Gas, NearToken, PanicOnDefault, Promise, PromiseError, PublicKey,
+    store::{IterableMap, IterableSet},
+    AccountId, BorshStorageKey, CryptoHash, Gas, GasWeight, PanicOnDefault, PromiseError,
+    PromiseOrValue, PublicKey,
 };
 
 use crate::events::*;
@@ -18,11 +17,18 @@ mod events;
 mod upgrade;
 mod view;
 
+// Register used to receive data id from `promise_await_data`.
+const DATA_ID_REGISTER: u64 = 0;
+
+// Prepaid gas for a `on_received_response` call
+const ON_RECEIVED_RESPONSE_CALL_GAS: Gas = Gas::from_tgas(5);
+
 #[near]
 #[derive(BorshStorageKey)]
 pub enum Prefix {
     ApprovedCodeHashes,
     WorkerByAccountId,
+    PendingRequests,
 }
 
 #[near(serializers = [json, borsh])]
@@ -30,6 +36,23 @@ pub enum Prefix {
 pub struct Worker {
     checksum: String,
     codehash: String,
+    public_key: PublicKey,
+}
+
+/// The index into calling the YieldResume feature of NEAR. This will allow to resume
+/// a yield call after the contract has been called back via this index.
+#[derive(Debug, Clone)]
+#[near(serializers=[borsh, json])]
+pub struct YieldIndex {
+    pub data_id: CryptoHash,
+}
+
+#[near(serializers = [json, borsh])]
+#[derive(Clone)]
+pub struct Request {
+    request_id: u64,
+    random_seed: Vec<u8>,
+    yield_index: YieldIndex,
 }
 
 #[near(contract_state)]
@@ -38,21 +61,8 @@ pub struct Contract {
     owner_id: AccountId,
     approved_codehashes: IterableSet<String>,
     worker_by_account_id: IterableMap<AccountId, Worker>,
-}
-
-#[allow(dead_code)]
-#[ext_contract(ext_intents_vault)]
-trait IntentsVaultContract {
-    fn add_public_key(intents_contract_id: AccountId, public_key: PublicKey);
-
-    fn ft_withdraw(
-        intents_contract_id: AccountId,
-        token: AccountId,
-        receiver_id: AccountId,
-        amount: U128,
-        memo: Option<String>,
-        msg: Option<String>,
-    );
+    pending_requests: IterableMap<u64, Request>,
+    last_request_id: u64,
 }
 
 #[near]
@@ -64,6 +74,8 @@ impl Contract {
             owner_id,
             approved_codehashes: IterableSet::new(Prefix::ApprovedCodeHashes),
             worker_by_account_id: IterableMap::new(Prefix::WorkerByAccountId),
+            pending_requests: IterableMap::new(Prefix::PendingRequests),
+            last_request_id: 0,
         }
     }
 
@@ -111,6 +123,7 @@ impl Contract {
             Worker {
                 checksum: checksum.clone(),
                 codehash: codehash.clone(),
+                public_key: public_key.clone(),
             },
         );
 
@@ -121,6 +134,84 @@ impl Contract {
             checksum: &checksum,
         }
         .emit();
+    }
+
+    /// Request a random number
+    pub fn request(&mut self) {
+        let request_id = self.last_request_id + 1;
+        self.last_request_id = request_id;
+
+        let promise_index = env::promise_yield_create(
+            "on_received_response",
+            &serde_json::to_vec(&(&request_id,)).unwrap(),
+            ON_RECEIVED_RESPONSE_CALL_GAS,
+            GasWeight(0),
+            DATA_ID_REGISTER,
+        );
+
+        // Store the request in the contract's local state
+        let data_id: CryptoHash = env::read_register(DATA_ID_REGISTER)
+            .expect("read_register failed")
+            .try_into()
+            .expect("conversion to CryptoHash failed");
+
+        self.pending_requests.insert(
+            request_id,
+            Request {
+                request_id,
+                random_seed: env::random_seed(),
+                yield_index: YieldIndex { data_id },
+            },
+        );
+
+        env::promise_return(promise_index);
+    }
+
+    /// A worker inside TEE will call the function with a response to the request
+    pub fn respond(&mut self, request_id: u64, response: Vec<u8>) {
+        let request = self
+            .pending_requests
+            .get(&request_id)
+            .expect("Request not found");
+        let worker = self.require_approved_worker();
+        let public_key = worker.public_key.clone();
+
+        let signature: &[u8; 64] = response
+            .as_slice()
+            .try_into()
+            .expect("Signature must be 64 bytes");
+        let public_key_bytes: &[u8; 32] = public_key
+            .as_bytes()
+            .try_into()
+            .expect("Public key must be 32 bytes");
+
+        // verify response is signed by the worker's public key
+        env::ed25519_verify(signature, request.random_seed.as_slice(), public_key_bytes);
+
+        // First get the yield promise of the (potentially timed out) request.
+        if let Some(request) = self.pending_requests.remove(&request_id) {
+            // Finally, resolve the promise. This will have no effect if the request already timed.
+            env::promise_yield_resume(
+                &request.yield_index.data_id,
+                &serde_json::to_vec(&response).unwrap(),
+            );
+        } else {
+            env::panic_str("Request not found");
+        }
+    }
+
+    /// Combine the random seed generated on-chain with the TEE generated random seed
+    #[private]
+    pub fn on_received_response(
+        &mut self,
+        _request_id: u64,
+        #[callback_result] resp: Result<Vec<u8>, PromiseError>,
+    ) -> PromiseOrValue<String> {
+        if resp.is_err() {
+            env::panic_str("Failed to generate random number");
+        }
+
+        PromiseOrValue::Value(encode(resp.unwrap()))
     }
 }
 
