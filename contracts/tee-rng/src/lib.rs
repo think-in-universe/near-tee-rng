@@ -74,7 +74,7 @@ impl Contract {
         collateral: String,
         checksum: String,
         tcb_info: String,
-    ) -> Promise {
+    ) {
         assert_one_yocto();
 
         let collateral = collateral::get_collateral(collateral);
