@@ -55,6 +55,14 @@ pub struct Request {
     yield_index: YieldIndex,
 }
 
+#[near(serializers = [json, borsh])]
+#[derive(Clone)]
+pub struct Response {
+    request_id: u64,
+    random_number: Vec<u8>,
+    signature: Vec<u8>,
+}
+
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
 pub struct Contract {
@@ -168,7 +176,8 @@ impl Contract {
     }
 
     /// A worker inside TEE will call the function with a response to the request
-    pub fn respond(&mut self, request_id: u64, response: Vec<u8>) {
+    pub fn respond(&mut self, response: Response) {
+        let request_id = response.request_id;
         let request = self
             .pending_requests
             .get(&request_id)
@@ -177,6 +186,7 @@ impl Contract {
         let public_key = worker.public_key.clone();
 
         let signature: &[u8; 64] = response
+            .signature
             .as_slice()
             .try_into()
             .expect("Signature must be 64 bytes");
@@ -193,7 +203,7 @@ impl Contract {
             // Finally, resolve the promise. This will have no effect if the request already timed.
             env::promise_yield_resume(
                 &request.yield_index.data_id,
-                &serde_json::to_vec(&response).unwrap(),
+                &serde_json::to_vec(&response.random_number).unwrap(),
             );
         } else {
             env::panic_str("Request not found");

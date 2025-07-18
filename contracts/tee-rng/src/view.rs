@@ -22,4 +22,12 @@ impl Contract {
             .take(limit as usize)
             .collect()
     }
+
+    pub fn get_pending_requests(&self, offset: u64, limit: u64) -> Vec<&Request> {
+        self.pending_requests
+            .values()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect()
+    }
 }
