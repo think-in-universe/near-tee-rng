@@ -9,7 +9,7 @@ lint:
 tee-rng:
 	$(call compile-release,tee-rng)
 	@mkdir -p contracts/tee-rng/res
-	@cp target/near/tee_rng/tee-rng.wasm ./contracts/tee-rng/res/tee_rng.wasm
+	@cp target/near/tee_rng/tee_rng.wasm ./contracts/tee-rng/res/tee_rng.wasm
 
 test: tee-rng
 	cargo test -- --nocapture
