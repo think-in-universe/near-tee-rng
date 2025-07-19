@@ -94,35 +94,44 @@ impl Contract {
         collateral: String,
         checksum: String,
         tcb_info: String,
+        skip_verify: Option<bool>,
     ) {
         assert_one_yocto();
 
-        let collateral = collateral::get_collateral(collateral);
-        let quote = decode(quote_hex).unwrap();
-        let now = block_timestamp() / 1000000000;
-        let result = verify::verify(&quote, &collateral, now).expect("Report is not verified");
-        let report = result.report.as_td10().unwrap();
-        let rtmr3 = encode(report.rt_mr3);
-
-        // verify the signer public key is the same as the one included in the report data
-        let report_data = encode(report.report_data);
+        let skip_verify = skip_verify.unwrap_or(false);
         let public_key = env::signer_account_pk();
-        let public_key_str: String = (&public_key).into();
-        // pad the public key hex with 0 to 128 characters
-        let public_key_hex = format!("{:0>128}", encode(public_key_str));
-        require!(
-            public_key_hex == report_data,
-            format!(
-                "Invalid public key: {} v.s. {}",
-                public_key_hex, report_data
-            )
-        );
+        let codehash = if !skip_verify {
+            let collateral = collateral::get_collateral(collateral);
+            let quote = decode(quote_hex).unwrap();
+            let now = block_timestamp() / 1000000000;
+            let result = verify::verify(&quote, &collateral, now).expect("Report is not verified");
+            let report = result.report.as_td10().unwrap();
+            let rtmr3 = encode(report.rt_mr3);
+    
+            // verify the signer public key is the same as the one included in the report data
+            let report_data = encode(report.report_data);
+            let public_key = env::signer_account_pk();
+            let public_key_str: String = (&public_key).into();
+            // pad the public key hex with 0 to 128 characters
+            let public_key_hex = format!("{:0>128}", encode(public_key_str));
+            require!(
+                public_key_hex == report_data,
+                format!(
+                    "Invalid public key: {} v.s. {}",
+                    public_key_hex, report_data
+                )
+            );
 
-        // only allow workers with approved code hashes to register
-        let codehash = collateral::verify_codehash(tcb_info, rtmr3);
-        self.assert_approved_codehash(&codehash);
+            // only allow workers with approved code hashes to register
+            let codehash = collateral::verify_codehash(tcb_info, rtmr3);
+            self.assert_approved_codehash(&codehash);
 
-        log!("verify result: {:?}", result);
+            log!("verify result: {:?}", result);
+
+            codehash
+        } else {
+            "0x0000000000000000000000000000000000000000000000000000000000000000".to_string()
+        };
 
         let worker_id = env::predecessor_account_id();
 
@@ -240,5 +249,70 @@ impl Contract {
             .expect("Worker not found");
         self.assert_approved_codehash(&worker.codehash);
         worker
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use near_sdk::test_utils::{accounts, VMContextBuilder};
+    use near_sdk::{testing_env, NearToken};
+
+    fn contract_account_id() -> AccountId {
+        accounts(0)
+    }
+
+    fn worker_account_id() -> AccountId {
+        accounts(1)
+    }
+
+    fn requester_account_id() -> AccountId {
+        accounts(2)
+    }
+
+    fn set_context(signer_account_id: AccountId, attached_deposit: u128) {
+        let context = VMContextBuilder::new()
+            .current_account_id(contract_account_id())
+            .predecessor_account_id(signer_account_id.clone())
+            .signer_account_id(signer_account_id)
+            .attached_deposit(NearToken::from_yoctonear(attached_deposit))
+            .build();
+        testing_env!(context);
+    }
+
+    fn get_contract() -> Contract {
+        Contract::new(contract_account_id())
+    }
+
+    #[test]
+    fn test_register_worker() {
+        let mut contract = get_contract();
+
+        let quote_hex = "0x1234567890".to_string();
+        let collateral = "0x1234567890".to_string();
+        let checksum = "0x1234567890".to_string();
+        let tcb_info = "0x1234567890".to_string();
+        let skip_verify = Some(true);
+
+        set_context(worker_account_id(), 1);
+        contract.register_worker(quote_hex, collateral, checksum, tcb_info, skip_verify);
+
+        let workers = contract.get_workers(0, 10);
+        assert_eq!(workers.len(), 1);
+
+        let worker = contract.get_worker(worker_account_id());
+        assert_eq!(worker.unwrap().public_key, env::signer_account_pk());
+    }
+
+    #[test]
+    fn test_request() {
+        let mut contract = get_contract();
+
+        set_context(requester_account_id(), 0);
+        contract.request();
+
+        let requests = contract.get_pending_requests(0, 10);
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].request_id, 1);
     }
 }
