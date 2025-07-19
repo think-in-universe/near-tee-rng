@@ -199,13 +199,27 @@ impl Contract {
             .as_slice()
             .try_into()
             .expect("Signature must be 64 bytes");
-        let public_key_bytes: &[u8; 32] = public_key
-            .as_bytes()
-            .try_into()
-            .expect("Public key must be 32 bytes");
+        let public_key_bytes_slice = public_key.as_bytes();
+        log!("Public key bytes length: {}", public_key_bytes_slice.len());
+        log!("Public key bytes: {:?}", public_key_bytes_slice);
+        
+        // NEAR public keys include a curve type prefix (1 byte) + actual key (32 bytes)
+        // For ED25519, the first byte should be 0
+        let public_key_bytes: &[u8; 32] = if public_key_bytes_slice.len() == 33 && public_key_bytes_slice[0] == 0 {
+            // Extract the actual 32-byte public key (skip the first byte)
+            public_key_bytes_slice[1..33].try_into().expect("Failed to extract 32-byte public key")
+        } else if public_key_bytes_slice.len() == 32 {
+            // Already 32 bytes, use as is
+            public_key_bytes_slice.try_into().expect("Public key must be 32 bytes")
+        } else {
+            // Unexpected format
+            env::panic_str(&format!("Unexpected public key format: {} bytes, first byte: {}", 
+                                   public_key_bytes_slice.len(), 
+                                   public_key_bytes_slice.first().unwrap_or(&255)));
+        };
 
         // verify response is signed by the worker's public key
-        env::ed25519_verify(signature, request.random_seed.as_slice(), public_key_bytes);
+        env::ed25519_verify(signature, response.random_number.as_slice(), public_key_bytes);
 
         // First get the yield promise of the (potentially timed out) request.
         if let Some(request) = self.pending_requests.remove(&request_id) {
@@ -257,17 +271,24 @@ mod tests {
     use super::*;
     use near_sdk::test_utils::{accounts, VMContextBuilder};
     use near_sdk::{testing_env, NearToken};
+    use ed25519_dalek::{SigningKey, Signer};
+    use rand::rngs::OsRng;
+    use sha2::{Sha256, Digest};
 
     fn contract_account_id() -> AccountId {
         accounts(0)
     }
 
-    fn worker_account_id() -> AccountId {
+    fn owner_account_id() -> AccountId {
         accounts(1)
     }
 
-    fn requester_account_id() -> AccountId {
+    fn worker_account_id() -> AccountId {
         accounts(2)
+    }
+
+    fn requester_account_id() -> AccountId {
+        accounts(3)
     }
 
     fn set_context(signer_account_id: AccountId, attached_deposit: u128) {
@@ -280,8 +301,19 @@ mod tests {
         testing_env!(context);
     }
 
+    fn set_context_with_signer(signer_account_id: AccountId, signer_account_pk: PublicKey, attached_deposit: u128, ) {
+        let context = VMContextBuilder::new()
+            .current_account_id(contract_account_id())
+            .predecessor_account_id(signer_account_id.clone())
+            .signer_account_id(signer_account_id)
+            .signer_account_pk(signer_account_pk)
+            .attached_deposit(NearToken::from_yoctonear(attached_deposit))
+            .build();
+        testing_env!(context);
+    }
+
     fn get_contract() -> Contract {
-        Contract::new(contract_account_id())
+        Contract::new(owner_account_id())
     }
 
     #[test]
@@ -314,5 +346,62 @@ mod tests {
         let requests = contract.get_pending_requests(0, 10);
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].request_id, 1);
+    }
+
+    #[test]
+    fn test_respond() {
+        let mut contract = get_contract();
+
+        // Generate a real ed25519 keypair
+        let mut rng = OsRng;
+        let signing_key = SigningKey::generate(&mut rng);
+        let verifying_key = signing_key.verifying_key();
+        
+        // Create a NEAR public key from the verifying key
+        let public_key_bytes = verifying_key.to_bytes();
+        let public_key = PublicKey::from_parts(near_sdk::CurveType::ED25519, public_key_bytes.to_vec()).unwrap();
+
+        set_context_with_signer(worker_account_id(), public_key.clone(), 1);
+
+        let quote_hex = "0x1234567890".to_string();
+        let collateral = "0x1234567890".to_string();
+        let checksum = "0x1234567890".to_string();
+        let tcb_info = "0x1234567890".to_string();
+        let skip_verify = Some(true);
+        
+        contract.register_worker(quote_hex, collateral, checksum, tcb_info, skip_verify);
+
+        set_context(owner_account_id(), 1);
+        contract.approve_codehash("0x0000000000000000000000000000000000000000000000000000000000000000".to_string());
+
+        set_context(requester_account_id(), 0);
+        contract.request();
+
+        let requests = contract.get_pending_requests(0, 10);
+        assert_eq!(requests.len(), 1);
+
+        let request = requests[0];
+        
+        // Generate random number using SHA256(signing_sk + seed)
+        let mut hasher = Sha256::new();
+        hasher.update(&signing_key.to_bytes()); // signing_sk
+        hasher.update(&request.random_seed);    // + seed
+        let random_number = hasher.finalize().to_vec();
+        
+        // Sign the actual random seed with our private key
+        let signature = signing_key.sign(&random_number);
+        let signature_bytes = signature.to_bytes().to_vec();
+        
+        let response = Response {
+            request_id: request.request_id,
+            random_number: random_number,
+            signature: signature_bytes,
+        };
+        
+        set_context_with_signer(worker_account_id(), public_key, 0);
+        contract.respond(response);
+
+        let requests = contract.get_pending_requests(0, 10);
+        assert_eq!(requests.len(), 0);
     }
 }
