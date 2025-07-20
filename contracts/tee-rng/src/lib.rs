@@ -130,6 +130,7 @@ impl Contract {
         self.internal_register_worker(codehash, public_key, checksum);
     }
 
+    /// Mocked function for testing register worker
     #[payable]
     #[cfg(feature = "test")]
     pub fn register_worker(
