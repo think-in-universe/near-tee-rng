@@ -8,6 +8,7 @@ use near_sdk::{
     AccountId, BorshStorageKey, CryptoHash, Gas, GasWeight, PanicOnDefault, PromiseError,
     PromiseOrValue, PublicKey,
 };
+use sha3::{Keccak256, Digest as KeccakDigest};
 
 use crate::events::*;
 
@@ -218,8 +219,20 @@ impl Contract {
                                    public_key_bytes_slice.first().unwrap_or(&255)));
         };
 
+        // Create the message hash that was signed: keccak256(keccak256(requestId, seed, random))
+        let mut message_hasher = sha3::Keccak256::new();
+        message_hasher.update(&request_id.to_le_bytes()); // requestId
+        message_hasher.update(&request.random_seed);      // seed
+        message_hasher.update(&response.random_number);   // random
+        let first_hash = message_hasher.finalize();
+        
+        // Double hash: keccak256(keccak256(...))
+        let mut double_hasher = sha3::Keccak256::new();
+        double_hasher.update(&first_hash);
+        let message_hash = double_hasher.finalize();
+        
         // verify response is signed by the worker's public key
-        env::ed25519_verify(signature, response.random_number.as_slice(), public_key_bytes);
+        env::ed25519_verify(signature, &message_hash, public_key_bytes);
 
         // First get the yield promise of the (potentially timed out) request.
         if let Some(request) = self.pending_requests.remove(&request_id) {
@@ -274,6 +287,7 @@ mod tests {
     use ed25519_dalek::{SigningKey, Signer};
     use rand::rngs::OsRng;
     use sha2::{Sha256, Digest};
+    use sha3::{Keccak256, Digest as KeccakDigest};
 
     fn contract_account_id() -> AccountId {
         accounts(0)
@@ -388,8 +402,20 @@ mod tests {
         hasher.update(&request.random_seed);    // + seed
         let random_number = hasher.finalize().to_vec();
         
-        // Sign the actual random seed with our private key
-        let signature = signing_key.sign(&random_number);
+        // Create the message to sign: keccak256(keccak256(requestId, seed, random))
+        let mut message_hasher = Keccak256::new();
+        message_hasher.update(&request.request_id.to_le_bytes()); // requestId
+        message_hasher.update(&request.random_seed);              // seed
+        message_hasher.update(&random_number);                    // random
+        let first_hash = message_hasher.finalize();
+        
+        // Double hash: keccak256(keccak256(...))
+        let mut double_hasher = Keccak256::new();
+        double_hasher.update(&first_hash);
+        let message_hash = double_hasher.finalize();
+        
+        // Sign the double keccak256 hash with our private key
+        let signature = signing_key.sign(&message_hash);
         let signature_bytes = signature.to_bytes().to_vec();
         
         let response = Response {
