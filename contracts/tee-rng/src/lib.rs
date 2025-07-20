@@ -89,69 +89,62 @@ impl Contract {
     }
 
     #[payable]
+    #[cfg(not(feature = "test"))]
     pub fn register_worker(
         &mut self,
         quote_hex: String,
         collateral: String,
         checksum: String,
         tcb_info: String,
-        skip_verify: Option<bool>,
     ) {
         assert_one_yocto();
 
-        let skip_verify = skip_verify.unwrap_or(false);
         let public_key = env::signer_account_pk();
-        let codehash = if !skip_verify {
-            let collateral = collateral::get_collateral(collateral);
-            let quote = decode(quote_hex).unwrap();
-            let now = block_timestamp() / 1000000000;
-            let result = verify::verify(&quote, &collateral, now).expect("Report is not verified");
-            let report = result.report.as_td10().unwrap();
-            let rtmr3 = encode(report.rt_mr3);
-    
-            // verify the signer public key is the same as the one included in the report data
-            let report_data = encode(report.report_data);
-            let public_key = env::signer_account_pk();
-            let public_key_str: String = (&public_key).into();
-            // pad the public key hex with 0 to 128 characters
-            let public_key_hex = format!("{:0>128}", encode(public_key_str));
-            require!(
-                public_key_hex == report_data,
-                format!(
-                    "Invalid public key: {} v.s. {}",
-                    public_key_hex, report_data
-                )
-            );
+        let collateral = collateral::get_collateral(collateral);
+        let quote = decode(quote_hex).unwrap();
+        let now = block_timestamp() / 1000000000;
+        let result = verify::verify(&quote, &collateral, now).expect("Report is not verified");
+        let report = result.report.as_td10().unwrap();
+        let rtmr3 = encode(report.rt_mr3);
 
-            // only allow workers with approved code hashes to register
-            let codehash = collateral::verify_codehash(tcb_info, rtmr3);
-            self.assert_approved_codehash(&codehash);
-
-            log!("verify result: {:?}", result);
-
-            codehash
-        } else {
-            "0x0000000000000000000000000000000000000000000000000000000000000000".to_string()
-        };
-
-        let worker_id = env::predecessor_account_id();
-
-        self.worker_by_account_id.insert(
-            worker_id.clone(),
-            Worker {
-                checksum: checksum.clone(),
-                codehash: codehash.clone(),
-                public_key: public_key.clone(),
-            },
+        // verify the signer public key is the same as the one included in the report data
+        let report_data = encode(report.report_data);
+        let public_key = env::signer_account_pk();
+        let public_key_str: String = (&public_key).into();
+        // pad the public key hex with 0 to 128 characters
+        let public_key_hex = format!("{:0>128}", encode(public_key_str));
+        require!(
+            public_key_hex == report_data,
+            format!(
+                "Invalid public key: {} v.s. {}",
+                public_key_hex, report_data
+            )
         );
 
-        Event::WorkerRegistered {
-            worker_id: &worker_id,
-            public_key: &public_key,
-            codehash: &codehash,
-            checksum: &checksum,
-        }
-        .emit();
+        // only allow workers with approved code hashes to register
+        let codehash = collateral::verify_codehash(tcb_info, rtmr3);
+        self.assert_approved_codehash(&codehash);
+
+        log!("verify result: {:?}", result);
+
+        self.internal_register_worker(codehash, public_key, checksum);
+    }
+
+    #[payable]
+    #[cfg(feature = "test")]
+    pub fn register_worker(
+        &mut self,
+        _quote_hex: String,
+        _collateral: String,
+        checksum: String,
+        _tcb_info: String,
+    ) {
+        assert_one_yocto();
+
+        let public_key = env::signer_account_pk();
+        let codehash = self.approved_codehashes.iter().next().unwrap().clone();
+
+        self.internal_register_worker(codehash, public_key, checksum);
     }
 
     /// Request a random number
@@ -262,6 +255,27 @@ impl Contract {
 }
 
 impl Contract {
+    fn internal_register_worker(&mut self, codehash: String, public_key: PublicKey, checksum: String) {
+        let worker_id = env::predecessor_account_id();
+
+        self.worker_by_account_id.insert(
+            worker_id.clone(),
+            Worker {
+                checksum: checksum.clone(),
+                codehash: codehash.clone(),
+                public_key: public_key.clone(),
+            },
+        );
+
+        Event::WorkerRegistered {
+            worker_id: &worker_id,
+            public_key: &public_key,
+            codehash: &codehash,
+            checksum: &checksum,
+        }
+        .emit();
+    }
+
     fn assert_approved_codehash(&self, codehash: &String) {
         require!(
             self.approved_codehashes.contains(codehash),
@@ -280,6 +294,7 @@ impl Contract {
 }
 
 #[cfg(test)]
+#[cfg(feature = "test")]
 mod tests {
     use super::*;
     use near_sdk::test_utils::{accounts, VMContextBuilder};
@@ -303,6 +318,10 @@ mod tests {
 
     fn requester_account_id() -> AccountId {
         accounts(3)
+    }
+
+    fn approved_codehash() -> String {
+        "0x0000000000000000000000000000000000000000000000000000000000000000".to_string()
     }
 
     fn set_context(signer_account_id: AccountId, attached_deposit: u128) {
@@ -334,14 +353,17 @@ mod tests {
     fn test_register_worker() {
         let mut contract = get_contract();
 
+        // Approve the codehash
+        set_context(owner_account_id(), 1);
+        contract.approve_codehash(approved_codehash());
+
+        // Register the worker
         let quote_hex = "0x1234567890".to_string();
         let collateral = "0x1234567890".to_string();
         let checksum = "0x1234567890".to_string();
         let tcb_info = "0x1234567890".to_string();
-        let skip_verify = Some(true);
-
         set_context(worker_account_id(), 1);
-        contract.register_worker(quote_hex, collateral, checksum, tcb_info, skip_verify);
+        contract.register_worker(quote_hex, collateral, checksum, tcb_info);
 
         let workers = contract.get_workers(0, 10);
         assert_eq!(workers.len(), 1);
@@ -366,6 +388,10 @@ mod tests {
     fn test_respond() {
         let mut contract = get_contract();
 
+        // Approve the codehash
+        set_context(owner_account_id(), 1);
+        contract.approve_codehash(approved_codehash());
+
         // Generate a real ed25519 keypair
         let mut rng = OsRng;
         let signing_key = SigningKey::generate(&mut rng);
@@ -381,12 +407,8 @@ mod tests {
         let collateral = "0x1234567890".to_string();
         let checksum = "0x1234567890".to_string();
         let tcb_info = "0x1234567890".to_string();
-        let skip_verify = Some(true);
-        
-        contract.register_worker(quote_hex, collateral, checksum, tcb_info, skip_verify);
 
-        set_context(owner_account_id(), 1);
-        contract.approve_codehash("0x0000000000000000000000000000000000000000000000000000000000000000".to_string());
+        contract.register_worker(quote_hex, collateral, checksum, tcb_info);
 
         set_context(requester_account_id(), 0);
         contract.request();

@@ -50,3 +50,6 @@ anyhow = "1.0.97"
 near-gas = "0.3.0"
 ed25519-dalek = { version = "2.2.0", features = ["rand_core"] }
 rand = "0.8.5"
+
+[features]
+test = []
