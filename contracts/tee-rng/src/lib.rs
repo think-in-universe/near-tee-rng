@@ -6,7 +6,7 @@ use near_sdk::{
     log, near, require,
     store::{IterableMap, IterableSet},
     AccountId, BorshStorageKey, CryptoHash, Gas, GasWeight, PanicOnDefault, PromiseError,
-    PromiseOrValue, PublicKey,
+    PromiseOrValue, PublicKey, NearToken, Promise,
 };
 use sha3::Digest as KeccakDigest;
 
@@ -20,6 +20,9 @@ mod view;
 
 // Register used to receive data id from `promise_await_data`.
 const DATA_ID_REGISTER: u64 = 0;
+
+// Minimum attached deposit for a request
+const MIN_REQUEST_DEPOSIT: NearToken = NearToken::from_millinear(5);
 
 // Prepaid gas for a `on_received_response` call
 const ON_RECEIVED_RESPONSE_CALL_GAS: Gas = Gas::from_tgas(5);
@@ -156,13 +159,22 @@ impl Contract {
     }
 
     /// Request a random number
+    #[payable]
     pub fn request(&mut self) {
+        let attached_deposit = env::attached_deposit();
+        require!(
+            attached_deposit >= MIN_REQUEST_DEPOSIT,
+            "Attached deposit must be no less than 0.005 NEAR"
+        );
+
         let request_id = self.last_request_id + 1;
         self.last_request_id = request_id;
 
+        let account_id = env::predecessor_account_id();
+
         let promise_index = env::promise_yield_create(
             "on_received_response",
-            &serde_json::to_vec(&(&request_id,)).unwrap(),
+            &serde_json::to_vec(&(&account_id, &attached_deposit)).unwrap(),
             ON_RECEIVED_RESPONSE_CALL_GAS,
             GasWeight(0),
             DATA_ID_REGISTER,
@@ -258,14 +270,17 @@ impl Contract {
     #[private]
     pub fn on_received_response(
         &mut self,
-        _request_id: u64,
+        account_id: AccountId,
+        attached_deposit: NearToken,
         #[callback_result] resp: Result<Vec<u8>, PromiseError>,
-    ) -> PromiseOrValue<String> {
-        if resp.is_err() {
-            env::panic_str("Failed to generate random number");
-        }
+    ) -> PromiseOrValue<Option<String>> {
+        // Return the attached deposit to the requester
+        Promise::new(account_id.clone()).transfer(attached_deposit);
 
-        PromiseOrValue::Value(encode(resp.unwrap()))
+        if resp.is_err() {
+            return PromiseOrValue::Value(None);
+        }
+        PromiseOrValue::Value(Some(encode(resp.unwrap())))
     }
 }
 
@@ -324,6 +339,9 @@ mod tests {
     use sha2::{Digest, Sha256};
     use sha3::{Digest as KeccakDigest, Keccak256};
 
+    const ONE_YOCTO_NEAR: NearToken = NearToken::from_yoctonear(1);
+    const NO_DEPOSIT: NearToken = NearToken::from_yoctonear(0);
+
     fn contract_account_id() -> AccountId {
         accounts(0)
     }
@@ -344,12 +362,12 @@ mod tests {
         "0x0000000000000000000000000000000000000000000000000000000000000000".to_string()
     }
 
-    fn set_context(signer_account_id: AccountId, attached_deposit: u128) {
+    fn set_context(signer_account_id: AccountId, attached_deposit: NearToken) {
         let context = VMContextBuilder::new()
             .current_account_id(contract_account_id())
             .predecessor_account_id(signer_account_id.clone())
             .signer_account_id(signer_account_id)
-            .attached_deposit(NearToken::from_yoctonear(attached_deposit))
+            .attached_deposit(attached_deposit)
             .build();
         testing_env!(context);
     }
@@ -357,14 +375,14 @@ mod tests {
     fn set_context_with_signer(
         signer_account_id: AccountId,
         signer_account_pk: PublicKey,
-        attached_deposit: u128,
+        attached_deposit: NearToken,
     ) {
         let context = VMContextBuilder::new()
             .current_account_id(contract_account_id())
             .predecessor_account_id(signer_account_id.clone())
             .signer_account_id(signer_account_id)
             .signer_account_pk(signer_account_pk)
-            .attached_deposit(NearToken::from_yoctonear(attached_deposit))
+            .attached_deposit(attached_deposit)
             .build();
         testing_env!(context);
     }
@@ -378,7 +396,7 @@ mod tests {
         let mut contract = get_contract();
 
         // Approve the codehash
-        set_context(owner_account_id(), 1);
+        set_context(owner_account_id(), ONE_YOCTO_NEAR);
         contract.approve_codehash(approved_codehash());
 
         // Register the worker
@@ -386,7 +404,7 @@ mod tests {
         let collateral = "0x1234567890".to_string();
         let checksum = "0x1234567890".to_string();
         let tcb_info = "0x1234567890".to_string();
-        set_context(worker_account_id(), 1);
+        set_context(worker_account_id(), ONE_YOCTO_NEAR);
         contract.register_worker(quote_hex, collateral, checksum, tcb_info);
 
         let workers = contract.get_workers(0, 10);
@@ -400,7 +418,7 @@ mod tests {
     fn test_request() {
         let mut contract = get_contract();
 
-        set_context(requester_account_id(), 0);
+        set_context(requester_account_id(), MIN_REQUEST_DEPOSIT);
         contract.request();
 
         let requests = contract.get_pending_requests(0, 10);
@@ -413,7 +431,7 @@ mod tests {
         let mut contract = get_contract();
 
         // Approve the codehash
-        set_context(owner_account_id(), 1);
+        set_context(owner_account_id(), ONE_YOCTO_NEAR);
         contract.approve_codehash(approved_codehash());
 
         // Generate a real ed25519 keypair
@@ -426,7 +444,7 @@ mod tests {
         let public_key =
             PublicKey::from_parts(near_sdk::CurveType::ED25519, public_key_bytes.to_vec()).unwrap();
 
-        set_context_with_signer(worker_account_id(), public_key.clone(), 1);
+        set_context_with_signer(worker_account_id(), public_key.clone(), ONE_YOCTO_NEAR);
 
         let quote_hex = "0x1234567890".to_string();
         let collateral = "0x1234567890".to_string();
@@ -435,7 +453,7 @@ mod tests {
 
         contract.register_worker(quote_hex, collateral, checksum, tcb_info);
 
-        set_context(requester_account_id(), 0);
+        set_context(requester_account_id(), MIN_REQUEST_DEPOSIT);
         contract.request();
 
         let requests = contract.get_pending_requests(0, 10);
@@ -471,7 +489,7 @@ mod tests {
             signature: signature_bytes,
         };
 
-        set_context_with_signer(worker_account_id(), public_key, 0);
+        set_context_with_signer(worker_account_id(), public_key, NO_DEPOSIT);
         contract.respond(response);
 
         let requests = contract.get_pending_requests(0, 10);
