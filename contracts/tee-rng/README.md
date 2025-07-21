@@ -72,7 +72,7 @@ cargo near deploy <account-id>
 
 - All sensitive methods are protected by worker verification and codehash approval
 - Worker registration requires valid TEE attestation and collateral
-- Access control is managed through codehash verification
+- Random number generation access control is managed through codehash verification
 - Owner-only administrative and upgrade functions
 - All critical actions are logged and important events are emitted
 

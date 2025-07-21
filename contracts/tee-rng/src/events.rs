@@ -20,6 +20,16 @@ pub enum Event<'a> {
         codehash: &'a String,
         checksum: &'a String,
     },
+    Request {
+        account_id: &'a AccountId,
+        request_id: &'a u64,
+        random_seed: &'a [u8],
+    },
+    Response {
+        worker_id: &'a AccountId,
+        request_id: &'a u64,
+        random_number: &'a [u8],
+    },
 }
 
 impl Event<'_> {

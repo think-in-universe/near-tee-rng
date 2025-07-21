@@ -196,6 +196,13 @@ impl Contract {
         );
 
         env::promise_return(promise_index);
+
+        Event::Request {
+            account_id: &account_id,
+            request_id: &request_id,
+            random_seed: &env::random_seed(),
+        }
+        .emit();
     }
 
     /// A worker inside TEE will call the function with a response to the request
@@ -214,8 +221,6 @@ impl Contract {
             .try_into()
             .expect("Signature must be 64 bytes");
         let public_key_bytes_slice = public_key.as_bytes();
-        log!("Public key bytes length: {}", public_key_bytes_slice.len());
-        log!("Public key bytes: {:?}", public_key_bytes_slice);
 
         // NEAR public keys include a curve type prefix (1 byte) + actual key (32 bytes)
         // For ED25519, the first byte should be 0
@@ -261,6 +266,13 @@ impl Contract {
                 &request.yield_index.data_id,
                 &serde_json::to_vec(&response.random_number).unwrap(),
             );
+
+            Event::Response {
+                worker_id: &env::predecessor_account_id(),
+                request_id: &request_id,
+                random_number: &response.random_number,
+            }
+            .emit();
         } else {
             env::panic_str("Request not found");
         }
