@@ -318,7 +318,7 @@ impl Contract {
         );
     }
 
-    pub(crate) fn require_approved_worker(&self) -> &Worker {
+    fn require_approved_worker(&self) -> &Worker {
         let worker = self
             .worker_by_account_id
             .get(&env::predecessor_account_id())
