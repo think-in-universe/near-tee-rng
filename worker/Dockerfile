@@ -11,7 +11,9 @@ WORKDIR /app
 
 # Install all dependencies
 COPY package*.json ./
-RUN npm ci
+COPY pnpm-lock.yaml ./
+RUN npm install -g pnpm
+RUN pnpm install
 
 # Stage 2: Runtime Lightweight Image
 FROM node:20-slim AS runtime
