@@ -5,8 +5,8 @@ use near_sdk::{
     env::{self, block_timestamp},
     log, near, require,
     store::{IterableMap, IterableSet},
-    AccountId, BorshStorageKey, CryptoHash, Gas, GasWeight, PanicOnDefault, PromiseError,
-    PromiseOrValue, PublicKey, NearToken, Promise,
+    AccountId, BorshStorageKey, CryptoHash, Gas, GasWeight, NearToken, PanicOnDefault, Promise,
+    PromiseError, PromiseOrValue, PublicKey,
 };
 use sha3::Digest as KeccakDigest;
 
