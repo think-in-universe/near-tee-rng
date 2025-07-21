@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  cvm_runner:
+    image: robortyan/near-tee-rng:latest@sha256:91d6e0b2173f9a512bd92ca7ee7260f1c2bc2f5b88c7c92cc7cbcb7263e8e68e
+    platform: linux/amd64
+    ports:
+      - "3000:3000"
+    environment:
+      NEAR_NETWORK_ID: ${NEAR_NETWORK_ID}
+      NEAR_NODE_URL: ${NEAR_NODE_URL}
+      TEE_RNG_CONTRACT: ${TEE_RNG_CONTRACT}
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 2G
+    volumes:
+      - /var/run/tappd.sock:/var/run/tappd.sock
