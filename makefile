@@ -1,6 +1,6 @@
 RUSTFLAGS = "-C link-arg=-s"
 
-all: lint near-tee-rng
+all: lint tee-rng
 
 lint:
 	@cargo fmt --all

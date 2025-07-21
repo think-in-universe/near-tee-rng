@@ -8,7 +8,7 @@ use near_sdk::{
     AccountId, BorshStorageKey, CryptoHash, Gas, GasWeight, PanicOnDefault, PromiseError,
     PromiseOrValue, PublicKey,
 };
-use sha3::{Keccak256, Digest as KeccakDigest};
+use sha3::Digest as KeccakDigest;
 
 use crate::events::*;
 
@@ -197,34 +197,41 @@ impl Contract {
         let public_key_bytes_slice = public_key.as_bytes();
         log!("Public key bytes length: {}", public_key_bytes_slice.len());
         log!("Public key bytes: {:?}", public_key_bytes_slice);
-        
+
         // NEAR public keys include a curve type prefix (1 byte) + actual key (32 bytes)
         // For ED25519, the first byte should be 0
-        let public_key_bytes: &[u8; 32] = if public_key_bytes_slice.len() == 33 && public_key_bytes_slice[0] == 0 {
-            // Extract the actual 32-byte public key (skip the first byte)
-            public_key_bytes_slice[1..33].try_into().expect("Failed to extract 32-byte public key")
-        } else if public_key_bytes_slice.len() == 32 {
-            // Already 32 bytes, use as is
-            public_key_bytes_slice.try_into().expect("Public key must be 32 bytes")
-        } else {
-            // Unexpected format
-            env::panic_str(&format!("Unexpected public key format: {} bytes, first byte: {}", 
-                                   public_key_bytes_slice.len(), 
-                                   public_key_bytes_slice.first().unwrap_or(&255)));
-        };
+        let public_key_bytes: &[u8; 32] =
+            if public_key_bytes_slice.len() == 33 && public_key_bytes_slice[0] == 0 {
+                // Extract the actual 32-byte public key (skip the first byte)
+                public_key_bytes_slice[1..33]
+                    .try_into()
+                    .expect("Failed to extract 32-byte public key")
+            } else if public_key_bytes_slice.len() == 32 {
+                // Already 32 bytes, use as is
+                public_key_bytes_slice
+                    .try_into()
+                    .expect("Public key must be 32 bytes")
+            } else {
+                // Unexpected format
+                env::panic_str(&format!(
+                    "Unexpected public key format: {} bytes, first byte: {}",
+                    public_key_bytes_slice.len(),
+                    public_key_bytes_slice.first().unwrap_or(&255)
+                ));
+            };
 
         // Create the message hash that was signed: keccak256(keccak256(requestId, seed, random))
         let mut message_hasher = sha3::Keccak256::new();
-        message_hasher.update(&request_id.to_le_bytes()); // requestId
-        message_hasher.update(&request.random_seed);      // seed
-        message_hasher.update(&response.random_number);   // random
+        message_hasher.update(request_id.to_le_bytes()); // requestId
+        message_hasher.update(&request.random_seed); // seed
+        message_hasher.update(&response.random_number); // random
         let first_hash = message_hasher.finalize();
-        
+
         // Double hash: keccak256(keccak256(...))
         let mut double_hasher = sha3::Keccak256::new();
-        double_hasher.update(&first_hash);
+        double_hasher.update(first_hash);
         let message_hash = double_hasher.finalize();
-        
+
         // verify response is signed by the worker's public key
         env::ed25519_verify(signature, &message_hash, public_key_bytes);
 
@@ -256,7 +263,12 @@ impl Contract {
 }
 
 impl Contract {
-    fn internal_register_worker(&mut self, codehash: String, public_key: PublicKey, checksum: String) {
+    fn internal_register_worker(
+        &mut self,
+        codehash: String,
+        public_key: PublicKey,
+        checksum: String,
+    ) {
         let worker_id = env::predecessor_account_id();
 
         self.worker_by_account_id.insert(
@@ -298,12 +310,12 @@ impl Contract {
 #[cfg(feature = "test")]
 mod tests {
     use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
     use near_sdk::test_utils::{accounts, VMContextBuilder};
     use near_sdk::{testing_env, NearToken};
-    use ed25519_dalek::{SigningKey, Signer};
     use rand::rngs::OsRng;
-    use sha2::{Sha256, Digest};
-    use sha3::{Keccak256, Digest as KeccakDigest};
+    use sha2::{Digest, Sha256};
+    use sha3::{Digest as KeccakDigest, Keccak256};
 
     fn contract_account_id() -> AccountId {
         accounts(0)
@@ -335,7 +347,11 @@ mod tests {
         testing_env!(context);
     }
 
-    fn set_context_with_signer(signer_account_id: AccountId, signer_account_pk: PublicKey, attached_deposit: u128, ) {
+    fn set_context_with_signer(
+        signer_account_id: AccountId,
+        signer_account_pk: PublicKey,
+        attached_deposit: u128,
+    ) {
         let context = VMContextBuilder::new()
             .current_account_id(contract_account_id())
             .predecessor_account_id(signer_account_id.clone())
@@ -397,10 +413,11 @@ mod tests {
         let mut rng = OsRng;
         let signing_key = SigningKey::generate(&mut rng);
         let verifying_key = signing_key.verifying_key();
-        
+
         // Create a NEAR public key from the verifying key
         let public_key_bytes = verifying_key.to_bytes();
-        let public_key = PublicKey::from_parts(near_sdk::CurveType::ED25519, public_key_bytes.to_vec()).unwrap();
+        let public_key =
+            PublicKey::from_parts(near_sdk::CurveType::ED25519, public_key_bytes.to_vec()).unwrap();
 
         set_context_with_signer(worker_account_id(), public_key.clone(), 1);
 
@@ -418,35 +435,35 @@ mod tests {
         assert_eq!(requests.len(), 1);
 
         let request = requests[0];
-        
+
         // Generate random number using SHA256(signing_sk + seed)
         let mut hasher = Sha256::new();
         hasher.update(&signing_key.to_bytes()); // signing_sk
-        hasher.update(&request.random_seed);    // + seed
+        hasher.update(&request.random_seed); // + seed
         let random_number = hasher.finalize().to_vec();
-        
+
         // Create the message to sign: keccak256(keccak256(requestId, seed, random))
         let mut message_hasher = Keccak256::new();
         message_hasher.update(&request.request_id.to_le_bytes()); // requestId
-        message_hasher.update(&request.random_seed);              // seed
-        message_hasher.update(&random_number);                    // random
+        message_hasher.update(&request.random_seed); // seed
+        message_hasher.update(&random_number); // random
         let first_hash = message_hasher.finalize();
-        
+
         // Double hash: keccak256(keccak256(...))
         let mut double_hasher = Keccak256::new();
         double_hasher.update(&first_hash);
         let message_hash = double_hasher.finalize();
-        
+
         // Sign the double keccak256 hash with our private key
         let signature = signing_key.sign(&message_hash);
         let signature_bytes = signature.to_bytes().to_vec();
-        
+
         let response = Response {
             request_id: request.request_id,
             random_number: random_number,
             signature: signature_bytes,
         };
-        
+
         set_context_with_signer(worker_account_id(), public_key, 0);
         contract.respond(response);
 
