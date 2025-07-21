@@ -125,7 +125,7 @@ export async function registerWorker(account: Account, publicKey: string) {
 }
 
 export async function getWorker(nearService: NearService, account: Account): Promise<Worker | null> {
-  return nearService.validatedViewFunction({
+  return nearService.getSigner().viewFunction({
     contractId: teeRngContract!,
     methodName: 'get_worker',
     args: {

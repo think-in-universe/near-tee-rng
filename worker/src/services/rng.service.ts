@@ -94,7 +94,7 @@ export class RngService {
    * Get pending requests from the contract
    */
   private async getPendingRequests(): Promise<Request[]> {
-    return this.nearService.validatedViewFunction({
+    return this.nearService.getSigner().viewFunction({
       contractId: this.contractId,
       methodName: 'get_pending_requests',
       args: {

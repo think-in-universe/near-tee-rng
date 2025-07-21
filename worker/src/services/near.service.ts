@@ -1,5 +1,6 @@
 import { Account, connect, KeyPair, Near } from 'near-api-js';
 import { KeyStore } from 'near-api-js/lib/key_stores';
+import { KeyPairString } from '@near-js/crypto';
 import { nearConnectionConfigs, nearNetworkId } from '../configs/near.config';
 import { LoggerService } from './logger.service';
 import { deriveWorkerAccount } from '../utils/agent';
@@ -21,7 +22,7 @@ export class NearService {
 
     const { accountId, publicKey, secretKey: privateKey } = await deriveWorkerAccount();
 
-    const keyPair = KeyPair.fromString(privateKey as any);
+    const keyPair = KeyPair.fromString(privateKey as KeyPairString);
     await this.keyStore.setKey(nearNetworkId, accountId, keyPair);
     this.account = await this.near.account(accountId);
     this.publicKey = publicKey;
