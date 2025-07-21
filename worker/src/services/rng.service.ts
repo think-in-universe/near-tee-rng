@@ -98,7 +98,7 @@ export class RngService {
       contractId: this.contractId,
       methodName: 'get_pending_requests',
       args: {
-        from_index: 0,
+        offset: 0,
         limit: 10,
       },
     });
@@ -111,7 +111,7 @@ export class RngService {
     this.logger.info(`Processing request ${request.request_id}`);
 
     // Generate random number using TEE entropy
-    const randomSeed = request.random_seed;
+    const randomSeed = new Uint8Array(request.random_seed);
     const randomNumber = await this.generateRandomNumber(randomSeed);
 
     // Create the message to sign: keccak256(keccak256(requestId, seed, random))
@@ -193,9 +193,11 @@ export class RngService {
       contractId: this.contractId,
       methodName: 'respond',
       args: {
-        request_id: response.request_id,
-        random_number: Array.from(response.random_number),
-        signature: Array.from(response.signature),
+        response: {
+          request_id: response.request_id,
+          random_number: Array.from(response.random_number),
+          signature: Array.from(response.signature),
+        },
       },
       gas: BigInt(200000000000000), // 200 Tgas
     });
