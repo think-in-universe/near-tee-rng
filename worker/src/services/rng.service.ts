@@ -23,7 +23,7 @@ export interface Response {
 export class RngService {
   private logger = new LoggerService('rng');
   private isRunning = false;
-  private pollingInterval = 1000; // 1 second
+  private pollingInterval = 500; // 0.5 second
   private tappdClient: TappdClient;
 
   constructor(
