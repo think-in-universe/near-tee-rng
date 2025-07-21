@@ -3,7 +3,7 @@ import { KeyStore } from 'near-api-js/lib/key_stores';
 import { KeyPairString } from '@near-js/crypto';
 import { nearConnectionConfigs, nearNetworkId } from '../configs/near.config';
 import { LoggerService } from './logger.service';
-import { deriveWorkerAccount } from '../utils/agent';
+import { deriveWorkerAccount } from '../utils/worker';
 
 export class NearService {
   private near!: Near;
@@ -71,7 +71,7 @@ export class NearService {
    * Gets the balance of the NEAR account
    * @returns {Promise<string>} Account balance
    */
-  public async getBalance() {
+  public async getBalance(): Promise<string> {
     let balance = '0';
     try {
       const { available } = await this.account.getAccountBalance();

@@ -1,7 +1,6 @@
 import { NearService } from './near.service';
-import { registerWorker } from 'src/utils/agent';
-import { getWorker } from 'src/utils/agent';
-import { sleep } from 'src/utils/time';
+import { registerWorker, getWorker } from '../utils/worker';
+import { sleep } from '../utils/time';
 import { LoggerService } from './logger.service';
 import { NEAR } from 'near-units';
 
