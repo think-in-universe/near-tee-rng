@@ -99,7 +99,6 @@ impl Contract {
     ) {
         assert_one_yocto();
 
-        let public_key = env::signer_account_pk();
         let collateral = collateral::get_collateral(collateral);
         let quote = decode(quote_hex).unwrap();
         let now = block_timestamp() / 1000000000;
@@ -135,17 +134,25 @@ impl Contract {
     #[cfg(feature = "test")]
     pub fn register_worker(
         &mut self,
-        _quote_hex: String,
-        _collateral: String,
+        quote_hex: String,
+        collateral: String,
         checksum: String,
-        _tcb_info: String,
+        tcb_info: String,
     ) {
         assert_one_yocto();
 
         let public_key = env::signer_account_pk();
         let codehash = self.approved_codehashes.iter().next().unwrap().clone();
 
-        self.internal_register_worker(codehash, public_key, checksum);
+        self.internal_register_worker(codehash, public_key, checksum.clone());
+
+        log!(
+            "register_worker arguments: quote_hex: {:?}, collateral: {:?}, checksum: {:?}, tcb_info: {:?}",
+            quote_hex,
+            collateral,
+            checksum,
+            tcb_info
+        );
     }
 
     /// Request a random number

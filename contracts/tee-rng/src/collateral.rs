@@ -1,6 +1,6 @@
 use crate::*;
 use serde_json::Value;
-use sha2::{Digest as _, Sha256, Sha384};
+use sha2::{Sha256, Sha384};
 
 pub fn get_collateral(raw_quote_collateral: String) -> QuoteCollateralV3 {
     let quote_collateral: serde_json::Value =

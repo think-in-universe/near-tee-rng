@@ -79,49 +79,69 @@ export async function deriveWorkerAccount(hash?: Buffer | undefined) {
  * @returns {Promise<boolean>} Result of the registration
  */
 export async function registerWorker(account: Account, publicKey: string) {
-  // get tcb_info from tappd
-  const client = new TappdClient(endpoint);
-  let tcb_info = (await client.getInfo()).tcb_info;
+  try {
+    // get tcb_info from tappd
+    const client = new TappdClient(endpoint);
+    let tcb_info = (await client.getInfo()).tcb_info;
 
-  // parse tcb_info
-  if (typeof tcb_info !== 'string') {
-    tcb_info = JSON.stringify(tcb_info);
+    // parse tcb_info
+    if (typeof tcb_info !== 'string') {
+      tcb_info = JSON.stringify(tcb_info);
+    }
+
+    // add public key into the attestation report data
+    // get TDX quote
+    const ra = await client.tdxQuote(publicKey, "raw");
+    const quote_hex = ra.quote.replace(/^0x/, '');
+
+    // get quote collateral
+    const formData = new FormData();
+    formData.append('hex', quote_hex);
+
+    // WARNING: this endpoint could throw or be offline
+    const resHelper = await (
+      await fetch('https://proof.t16z.com/api/upload', {
+        method: 'POST',
+        body: formData,
+      })
+    ).json();
+    const checksum = resHelper.checksum;
+    const collateral = JSON.stringify(resHelper.quote_collateral);
+
+    // register the worker (returns bool)
+    const resContract = await account.functionCall({
+      contractId: teeRngContract!,
+      methodName: 'register_worker',
+      args: {
+        quote_hex,
+        collateral,
+        checksum,
+        tcb_info,
+      },
+      attachedDeposit: BigInt(1),   // 1 yocto NEAR
+      gas: BigInt(200000000000000), // 200 Tgas
+    });
+
+    return resContract;
+  } catch (error) {
+    console.warn('NOT RUNNING IN TEE. Registering worker with mock data.', error);
+
+    // register the worker (returns bool)
+    const resContract = await account.functionCall({
+      contractId: teeRngContract!,
+      methodName: 'register_worker',
+      args: {
+        quote_hex: '',
+        collateral: '',
+        checksum: '',
+        tcb_info: '{}',
+      },
+      attachedDeposit: BigInt(1),   // 1 yocto NEAR
+      gas: BigInt(200000000000000), // 200 Tgas
+    });
+
+    return resContract;
   }
-
-  // add public key into the attestation report data
-  // get TDX quote
-  const ra = await client.tdxQuote(publicKey, "raw");
-  const quote_hex = ra.quote.replace(/^0x/, '');
-
-  // get quote collateral
-  const formData = new FormData();
-  formData.append('hex', quote_hex);
-
-  // WARNING: this endpoint could throw or be offline
-  const resHelper = await (
-    await fetch('https://proof.t16z.com/api/upload', {
-      method: 'POST',
-      body: formData,
-    })
-  ).json();
-  const checksum = resHelper.checksum;
-  const collateral = JSON.stringify(resHelper.quote_collateral);
-
-  // register the worker (returns bool)
-  const resContract = await account.functionCall({
-    contractId: teeRngContract!,
-    methodName: 'register_worker',
-    args: {
-      quote_hex,
-      collateral,
-      checksum,
-      tcb_info,
-    },
-    attachedDeposit: BigInt(1),   // 1 yocto NEAR
-    gas: BigInt(200000000000000), // 200 Tgas
-  });
-
-  return resContract;
 }
 
 export async function getWorker(nearService: NearService, account: Account): Promise<Worker | null> {

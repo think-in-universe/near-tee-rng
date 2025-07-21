@@ -11,10 +11,10 @@ export class WorkerService {
   private logger = new LoggerService('worker');
 
   public async init(): Promise<void> {
-    await this.registerWorker();
+    await this.register();
   }
 
-  private async registerWorker() {
+  private async register() {
     const signer = this.nearService.getSigner();
     let worker = await getWorker(this.nearService, signer);
     if (!worker) {
