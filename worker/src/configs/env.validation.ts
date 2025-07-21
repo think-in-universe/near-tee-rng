@@ -7,9 +7,6 @@ export const envVariablesValidationSchema = Joi.object({
 
   TEE_RNG_CONTRACT: Joi.string().required(),
 
-  // NEAR_ACCOUNT_ID: Joi.string().allow('', null),
-  // NEAR_PRIVATE_KEY: Joi.string().allow('', null),
-
   NEAR_NETWORK_ID: Joi.string().valid('mainnet', 'testnet').allow('', null),
   NEAR_NODE_URL: Joi.string().allow('', null),
 }).unknown();
